@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>SubsFeed</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E%3Ctext x='7' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='34' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230a0a0a'/%3E%3Ctext x='14' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='96' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SubsFeed">
+<meta name="theme-color" content="#0a0a0a">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -263,8 +270,10 @@ code{background:var(--bg3);padding:2px 5px;border-radius:4px;font-size:11px;font
 
 <script>
 // ── Config ──────────────────────────────────────────────────
-const SK = 'sfeed_cid';
-const API = 'https://www.googleapis.com/youtube/v3';
+const SK   = 'sfeed_cid';
+const SK_CACHE = 'sfeed_cache';
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const API  = 'https://www.googleapis.com/youtube/v3';
 
 // ── State ───────────────────────────────────────────────────
 const st = {
@@ -274,7 +283,7 @@ const st = {
   videos: [],
   filtered: [],
   playlists: [],
-  vmap: {},          // videoId → video object
+  vmap: {},
   filter: 'all',
   tab: 'Feed',
   feedDone: false,
@@ -283,10 +292,46 @@ const st = {
   tc: null,
 };
 
+// ── Cache helpers ────────────────────────────────────────────
+function saveCache(data) {
+  try {
+    localStorage.setItem(SK_CACHE, JSON.stringify({ts: Date.now(), ...data}));
+  } catch(e) { /* storage full — skip */ }
+}
+
+function loadCache() {
+  try {
+    const raw = localStorage.getItem(SK_CACHE);
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    if (Date.now() - c.ts > CACHE_TTL) return null;
+    return c;
+  } catch(e) { return null; }
+}
+
+function clearCache() {
+  localStorage.removeItem(SK_CACHE);
+}
+
 // ── Boot ────────────────────────────────────────────────────
 window.onload = () => {
-  if (st.cid) { show('S1'); loadGIS(); }
-  else show('S0');
+  if (!st.cid) { show('S0'); return; }
+
+  // Try to show cached feed immediately while auth refreshes in background
+  const cache = loadCache();
+  if (cache?.videos?.length) {
+    st.subs    = cache.subs    || [];
+    st.videos  = cache.videos  || [];
+    cache.videos.forEach(v => { st.vmap[v.videoId] = v; });
+    st.feedDone = true;
+    show('S2');
+    applyFilter();
+    toast('Refreshing feed…');
+  } else {
+    show('S1');
+  }
+
+  loadGIS();
 };
 
 function show(id) {
@@ -302,12 +347,14 @@ function saveSetup() {
   if (!v.includes('googleusercontent.com')) { toast('Enter a valid Client ID'); return; }
   localStorage.setItem(SK, v);
   st.cid = v;
+  clearCache();
   show('S1');
   loadGIS();
 }
 
 function resetSetup() {
   localStorage.removeItem(SK);
+  clearCache();
   st.cid=''; st.tok=null;
   show('S0');
 }
@@ -323,6 +370,7 @@ function loadGIS() {
   const s = document.createElement('script');
   s.src = 'https://accounts.google.com/gsi/client';
   s.onload = setupTC;
+  s.onerror = () => { if (!st.feedDone) show('S1'); };
   document.head.appendChild(s);
 }
 
@@ -332,20 +380,76 @@ function setupTC() {
     client_id: st.cid,
     scope: 'https://www.googleapis.com/auth/youtube.readonly',
     callback: onToken,
+    error_callback: (e) => {
+      // Silent refresh failed — only show login screen if no cached data
+      if (!st.feedDone) show('S1');
+    }
   });
+
+  // Attempt silent refresh (no prompt = no popup if user already consented)
+  st.tc.requestAccessToken({ prompt: '' });
 }
 
 function signIn() {
   if (!st.tc) { toast('Loading… try again in a moment'); setTimeout(signIn, 600); return; }
-  st.tc.requestAccessToken({ prompt: '' });
+  // Explicit sign-in with consent screen
+  st.tc.requestAccessToken({ prompt: 'consent' });
 }
 
 function onToken(r) {
-  if (r.error) { toast('Sign in failed: '+r.error); return; }
+  if (r.error) {
+    // If we have cached data already showing, stay there
+    if (!st.feedDone) show('S1');
+    return;
+  }
   st.tok = r.access_token;
-  show('S2');
-  loadUser();
-  loadFeed();
+
+  if (!st.feedDone) {
+    show('S2');
+    loadFeed();
+  } else {
+    // Already showing cached data — silently refresh in background
+    st.feedDone = false;
+    st.subsDone = false;
+    st.plDone   = false;
+    loadUser();
+    loadFeedSilent();
+  }
+}
+
+async function loadFeedSilent() {
+  // Refresh feed in background without showing loading spinner
+  try {
+    st.subs = await fetchAllSubs();
+    const upls = await fetchUploadPls(st.subs.map(s=>s.id));
+    st.subs.forEach(s=>{ s.upPl=upls[s.id]; });
+    const all=[];
+    const BS=8;
+    for (let i=0;i<st.subs.length;i+=BS) {
+      const batch=st.subs.slice(i,i+BS);
+      const results = await Promise.all(
+        batch.filter(s=>s.upPl).map(s=>
+          fetchPlItems(s.upPl,5).then(vs=>vs.map(v=>({...v,chThumb:s.thumb,channelTitle:v.channelTitle||s.title}))).catch(()=>[])
+        )
+      );
+      results.forEach(vs=>all.push(...vs));
+    }
+    all.sort((a,b)=>new Date(b.publishedAt)-new Date(a.publishedAt));
+    const dets = await fetchVidDetails(all.map(v=>v.videoId));
+    all.forEach(v=>{
+      const d=dets[v.videoId];
+      if (d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;if(d.title)v.title=d.title;}
+      st.vmap[v.videoId]=v;
+    });
+    st.videos=all;
+    st.feedDone=true;
+    saveCache({subs: st.subs, videos: all});
+    applyFilter();
+    toast('Feed updated ✓');
+  } catch(e) {
+    // Silent fail — cached data stays visible
+    st.feedDone=true;
+  }
 }
 
 // ── API ──────────────────────────────────────────────────────
@@ -426,6 +530,8 @@ async function fetchVidDetails(ids) {
 // ── Feed Loading ─────────────────────────────────────────────
 async function loadFeed() {
   if (st.feedDone) return;
+  show('S2');
+  loadUser();
   setLT('Loading subscriptions…');
   try {
     st.subs = await fetchAllSubs();
@@ -460,6 +566,7 @@ async function loadFeed() {
 
     st.videos=all;
     st.feedDone=true;
+    saveCache({subs: st.subs, videos: all});
     applyFilter();
   } catch(e) {
     document.getElementById('feedWrap').innerHTML=errHtml(e.message,'loadFeed()');
