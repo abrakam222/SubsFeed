@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>SubsFeed</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E%3Ctext x='7' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='34' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230a0a0a'/%3E%3Ctext x='14' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='96' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E%3Ctext x='4' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='30' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230a0a0a'/%3E%3Ctext x='8' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='88' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -124,11 +124,25 @@ code{background:var(--bg3);padding:2px 5px;border-radius:4px;font-size:11px;font
 .pvw iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:none}
 .pinfo{padding:14px;overflow-y:auto;flex:1;background:var(--bg)}
 .pvtitle{font-size:15px;font-weight:600;line-height:1.4;margin-bottom:12px}
-.pch{display:flex;align-items:center;gap:10px}
+.pch{display:flex;align-items:center;gap:10px;margin-bottom:14px}
 .pch-av{width:34px;height:34px;border-radius:50%;overflow:hidden;background:var(--bg3);flex-shrink:0}
 .pch-av img{width:100%;height:100%;object-fit:cover}
 .pch-name{font-size:13px;font-weight:500}
 .pch-date{font-size:11px;color:var(--text2)}
+.pvstats{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:14px}
+.pvstat{font-size:12px;color:var(--text2)}
+.pvstat span{color:var(--text);font-weight:600}
+.pcomments-title{font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text2)}
+.pcomment{padding:10px 0;border-bottom:1px solid var(--border)}
+.pcomment:last-child{border-bottom:none}
+.pc-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.pc-av{width:26px;height:26px;border-radius:50%;background:var(--bg3);overflow:hidden;flex-shrink:0}
+.pc-av img{width:100%;height:100%;object-fit:cover}
+.pc-author{font-size:11px;font-weight:600}
+.pc-date{font-size:10px;color:var(--text2);margin-left:auto}
+.pc-text{font-size:12px;line-height:1.5;color:var(--text2)}
+.pload-comments{margin-top:12px;padding:9px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);font-family:var(--font);font-size:12px;color:var(--text2);cursor:pointer;width:100%;text-align:center;transition:all .2s}
+.pload-comments:hover{border-color:var(--accent);color:var(--accent)}
 
 /* Channel view header */
 .ch-header{display:flex;align-items:center;gap:11px;padding:14px;border-bottom:1px solid var(--border)}
@@ -263,6 +277,11 @@ code{background:var(--bg3);padding:2px 5px;border-radius:4px;font-size:11px;font
         <div class="pch-date" id="pDate"></div>
       </div>
     </div>
+    <div class="pvstats" id="pvstats" style="display:none">
+      <div class="pvstat">👁 <span id="pViews"></span></div>
+      <div class="pvstat">💬 <span id="pCommentCount"></span> comments</div>
+    </div>
+    <div id="pCommentsWrap"></div>
   </div>
 </div>
 
@@ -376,24 +395,42 @@ function loadGIS() {
 
 function setupTC() {
   if (typeof google === 'undefined') { setTimeout(setupTC, 400); return; }
-  st.tc = google.accounts.oauth2.initTokenClient({
+
+  // Silent client — never shows popup, used for auto-refresh on reopen
+  st.tcSilent = google.accounts.oauth2.initTokenClient({
     client_id: st.cid,
     scope: 'https://www.googleapis.com/auth/youtube.readonly',
-    callback: onToken,
-    error_callback: (e) => {
-      // Silent refresh failed — only show login screen if no cached data
+    prompt: 'none',       // ← key: no popup ever
+    callback: (r) => {
+      if (r.error || !r.access_token) {
+        // Silent refresh failed (e.g. first time, session expired)
+        // Only show login screen if no cached data is already showing
+        if (!st.feedDone) show('S1');
+        return;
+      }
+      onToken(r);
+    },
+    error_callback: () => {
       if (!st.feedDone) show('S1');
     }
   });
 
-  // Attempt silent refresh (no prompt = no popup if user already consented)
-  st.tc.requestAccessToken({ prompt: '' });
+  // Explicit client — used only when user clicks "Sign in" button
+  st.tc = google.accounts.oauth2.initTokenClient({
+    client_id: st.cid,
+    scope: 'https://www.googleapis.com/auth/youtube.readonly',
+    callback: onToken,
+    error_callback: (e) => { toast('Sign in failed'); }
+  });
+
+  // Attempt silent refresh immediately on load
+  st.tcSilent.requestAccessToken();
 }
 
 function signIn() {
   if (!st.tc) { toast('Loading… try again in a moment'); setTimeout(signIn, 600); return; }
-  // Explicit sign-in with consent screen
-  st.tc.requestAccessToken({ prompt: 'consent' });
+  // Explicit sign-in with full consent screen — only called by button
+  st.tc.requestAccessToken({ prompt: 'select_account' });
 }
 
 function onToken(r) {
@@ -504,15 +541,20 @@ async function fetchUploadPls(ids) {
 async function fetchPlItems(plId, max=5) {
   const d = await api('/playlistItems',{part:'snippet,contentDetails',playlistId:plId,maxResults:max});
   if (!d?.items) return [];
-  return d.items.map(i=>({
-    videoId: i.contentDetails.videoId,
-    title: i.snippet.title,
-    channelId: i.snippet.videoOwnerChannelId||i.snippet.channelId,
-    channelTitle: i.snippet.videoOwnerChannelTitle||i.snippet.channelTitle||'',
-    publishedAt: i.snippet.publishedAt,
-    thumb: i.snippet.thumbnails?.medium?.url||i.snippet.thumbnails?.default?.url||'',
-    chThumb:'', dur:0, durStr:'', isShort:false
-  }));
+  return d.items.map(i=>{
+    const t=i.snippet.thumbnails;
+    const thumb = t?.maxres?.url||t?.standard?.url||t?.high?.url||t?.medium?.url||t?.default?.url||
+      `https://i.ytimg.com/vi/${i.contentDetails.videoId}/hqdefault.jpg`;
+    return {
+      videoId: i.contentDetails.videoId,
+      title: i.snippet.title,
+      channelId: i.snippet.videoOwnerChannelId||i.snippet.channelId,
+      channelTitle: i.snippet.videoOwnerChannelTitle||i.snippet.channelTitle||'',
+      publishedAt: i.snippet.publishedAt,
+      thumb,
+      chThumb:'', dur:0, durStr:'', isShort:false
+    };
+  });
 }
 
 async function fetchVidDetails(ids) {
@@ -615,11 +657,18 @@ function loadMore() {
   if(rem<=0){btn?.remove();}else if(btn){btn.textContent=`Load more (${rem} remaining)`;}
 }
 
+function bestThumb(t) {
+  // Return highest quality available thumbnail
+  if (!t) return '';
+  return t.maxres?.url || t.standard?.url || t.high?.url || t.medium?.url || t.default?.url || '';
+}
+
 function vCard(v) {
   const ago=tAgo(v.publishedAt);
   return `<div class="vc" onclick="play('${esc(v.videoId)}')">
     <div class="thumb">
-      <img src="${esc(v.thumb)}" loading="lazy" alt="" onerror="this.src=''">
+      <img src="${esc(v.thumb)}" loading="lazy" alt=""
+        onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='https://i.ytimg.com/vi/${esc(v.videoId)}/hqdefault.jpg';}">
       ${v.isShort?'<span class="short-badge">SHORT</span>':''}
       ${v.durStr?`<span class="dur">${esc(v.durStr)}</span>`:''}
     </div>
@@ -735,10 +784,73 @@ function play(vid) {
   document.getElementById('pChName').textContent=v.channelTitle;
   document.getElementById('pDate').textContent=tAgo(v.publishedAt);
   document.getElementById('pChAv').src=v.chThumb||'';
-  document.getElementById('ytf').src=`https://www.youtube.com/embed/${vid}?autoplay=1&rel=0&modestbranding=1&playsinline=1`;
+  document.getElementById('pvstats').style.display='none';
+  document.getElementById('pCommentsWrap').innerHTML=
+    `<button class="pload-comments" onclick="loadComments('${esc(vid)}')">Load comments</button>`;
+  document.getElementById('ytf').src=
+    `https://www.youtube.com/embed/${vid}?autoplay=1&rel=0&modestbranding=1&playsinline=1`;
   document.getElementById('player').classList.add('on');
   document.body.style.overflow='hidden';
   history.pushState({player:true},'');
+  // Load stats silently in background
+  loadVideoStats(vid);
+}
+
+async function loadVideoStats(vid) {
+  try {
+    const d = await api('/videos',{part:'statistics',id:vid});
+    const s = d?.items?.[0]?.statistics;
+    if (!s) return;
+    const views = s.viewCount ? fmtNum(parseInt(s.viewCount)) : null;
+    const cc    = s.commentCount ? fmtNum(parseInt(s.commentCount)) : null;
+    if (views) document.getElementById('pViews').textContent = views+' views';
+    if (cc)    document.getElementById('pCommentCount').textContent = cc;
+    if (views||cc) document.getElementById('pvstats').style.display='flex';
+  } catch(e){}
+}
+
+async function loadComments(vid) {
+  document.getElementById('pCommentsWrap').innerHTML=
+    `<div class="loading" style="padding:24px 0"><div class="spin"></div></div>`;
+  try {
+    const d = await api('/commentThreads',{
+      part:'snippet',videoId:vid,maxResults:20,order:'relevance'
+    });
+    if (!d?.items?.length) {
+      document.getElementById('pCommentsWrap').innerHTML=
+        `<div style="font-size:12px;color:var(--text2);padding:8px 0">Comments disabled or none yet</div>`;
+      return;
+    }
+    const html = d.items.map(c=>{
+      const top=c.snippet.topLevelComment.snippet;
+      const av=top.authorProfileImageUrl||'';
+      const author=top.authorDisplayName||'';
+      const text=top.textDisplay||'';
+      const date=tAgo(top.publishedAt);
+      const likes=top.likeCount>0?`<span style="font-size:10px;color:var(--text2);margin-left:auto">👍 ${fmtNum(top.likeCount)}</span>`:'';
+      return `<div class="pcomment">
+        <div class="pc-head">
+          <div class="pc-av"><img src="${esc(av)}" alt="" onerror="this.style.display='none'"></div>
+          <span class="pc-author">${esc(author)}</span>
+          <span class="pc-date">${date}</span>
+          ${likes}
+        </div>
+        <div class="pc-text">${esc(text).replace(/\n/g,'<br>')}</div>
+      </div>`;
+    }).join('');
+    document.getElementById('pCommentsWrap').innerHTML=
+      `<div class="pcomments-title">Top comments</div>${html}`;
+  } catch(e) {
+    document.getElementById('pCommentsWrap').innerHTML=
+      `<div style="font-size:12px;color:var(--text2);padding:8px 0">Could not load comments</div>`;
+  }
+}
+
+function fmtNum(n) {
+  if (n>=1e9) return (n/1e9).toFixed(1)+'B';
+  if (n>=1e6) return (n/1e6).toFixed(1)+'M';
+  if (n>=1e3) return (n/1e3).toFixed(1)+'K';
+  return n.toString();
 }
 
 function closePlayer() {
