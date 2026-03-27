@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>SubsFeed</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E%3Ctext x='4' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='30' y='46' font-family='Arial Black,Arial' font-weight='900' font-size='38' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230a0a0a'/%3E%3Ctext x='8' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23ffffff'%3ES%3C/text%3E%3Ctext x='88' y='130' font-family='Arial Black,Arial' font-weight='900' font-size='110' fill='%23e63946'%3EF%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg' viewBox%3D'0 0 64 64'%3E%3Crect width%3D'64' height%3D'64' rx%3D'14' fill%3D'%230a0a0a'%2F%3E%3Ctext x%3D'32' y%3D'47' text-anchor%3D'middle' font-family%3D'Arial Black%2CArial' font-weight%3D'900' font-size%3D'40'%3E%3Ctspan fill%3D'%23ffffff'%3ES%3C%2Ftspan%3E%3Ctspan fill%3D'%23e63946'%3EF%3C%2Ftspan%3E%3C%2Ftext%3E%3C%2Fsvg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg' viewBox%3D'0 0 180 180'%3E%3Crect width%3D'180' height%3D'180' rx%3D'40' fill%3D'%230a0a0a'%2F%3E%3Ctext x%3D'90' y%3D'132' text-anchor%3D'middle' font-family%3D'Arial Black%2CArial' font-weight%3D'900' font-size%3D'112'%3E%3Ctspan fill%3D'%23ffffff'%3ES%3C%2Ftspan%3E%3Ctspan fill%3D'%23e63946'%3EF%3C%2Ftspan%3E%3C%2Ftext%3E%3C%2Fsvg%3E">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -89,6 +89,7 @@ code{background:var(--bg3);padding:2px 5px;border-radius:4px;font-size:11px;font
 .vmt{flex:1;min-width:0}
 .ch-name{font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vdate{font-size:10px;color:#555}
+.vviews{font-size:10px;color:#555;margin-top:1px}
 
 .more-btn{display:block;margin:18px auto;padding:11px 28px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
 .more-btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -309,6 +310,9 @@ const st = {
   subsDone: false,
   plDone: false,
   tc: null,
+  tcSilent: null,
+  refreshTimer: null,
+  currentVid: null,
 };
 
 // ── Cache helpers ────────────────────────────────────────────
@@ -435,23 +439,52 @@ function signIn() {
 
 function onToken(r) {
   if (r.error) {
-    // If we have cached data already showing, stay there
     if (!st.feedDone) show('S1');
     return;
   }
   st.tok = r.access_token;
+  // Schedule proactive refresh every 45 min (tokens last 60 min)
+  clearTimeout(st.refreshTimer);
+  st.refreshTimer = setTimeout(proactiveRefresh, 45 * 60 * 1000);
 
   if (!st.feedDone) {
     show('S2');
     loadFeed();
   } else {
-    // Already showing cached data — silently refresh in background
     st.feedDone = false;
     st.subsDone = false;
     st.plDone   = false;
     loadUser();
     loadFeedSilent();
   }
+}
+
+function proactiveRefresh() {
+  // Silently get a new token before the old one expires
+  if (!st.tcSilent) return;
+  st.tcSilent.requestAccessToken();
+}
+
+// Refresh token on demand, returns a promise
+function refreshTokenNow() {
+  return new Promise((resolve) => {
+    if (!st.tcSilent) { resolve(false); return; }
+    const tmp = google.accounts.oauth2.initTokenClient({
+      client_id: st.cid,
+      scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      prompt: 'none',
+      callback: (r) => {
+        if (!r.error && r.access_token) {
+          st.tok = r.access_token;
+          clearTimeout(st.refreshTimer);
+          st.refreshTimer = setTimeout(proactiveRefresh, 45 * 60 * 1000);
+          resolve(true);
+        } else { resolve(false); }
+      },
+      error_callback: () => resolve(false)
+    });
+    tmp.requestAccessToken();
+  });
 }
 
 async function loadFeedSilent() {
@@ -475,7 +508,7 @@ async function loadFeedSilent() {
     const dets = await fetchVidDetails(all.map(v=>v.videoId));
     all.forEach(v=>{
       const d=dets[v.videoId];
-      if (d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;if(d.title)v.title=d.title;}
+      if (d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;if(d.title)v.title=d.title;v.viewStr=d.viewStr||'';}
       st.vmap[v.videoId]=v;
     });
     st.videos=all;
@@ -490,11 +523,20 @@ async function loadFeedSilent() {
 }
 
 // ── API ──────────────────────────────────────────────────────
-async function api(path, p={}) {
+async function api(path, p={}, _retry=true) {
   const url = new URL(API+path);
   Object.entries(p).forEach(([k,v])=>url.searchParams.set(k,v));
   const r = await fetch(url, {headers:{Authorization:`Bearer ${st.tok}`}});
-  if (r.status===401) { toast('Session expired — please sign in again'); show('S1'); return null; }
+  if (r.status===401) {
+    if (_retry) {
+      // Token expired — refresh silently and retry once
+      const ok = await refreshTokenNow();
+      if (ok) return api(path, p, false);
+    }
+    // Refresh failed — only show login if we have no feed to display
+    if (!st.feedDone) show('S1');
+    return null;
+  }
   if (!r.ok) { const e=await r.json(); throw new Error(e.error?.message||'API error'); }
   return r.json();
 }
@@ -560,10 +602,15 @@ async function fetchPlItems(plId, max=5) {
 async function fetchVidDetails(ids) {
   const m={};
   for (let i=0;i<ids.length;i+=50) {
-    const d = await api('/videos',{part:'contentDetails,snippet',id:ids.slice(i,i+50).join(','),maxResults:50});
+    const d = await api('/videos',{part:'contentDetails,snippet,statistics',id:ids.slice(i,i+50).join(','),maxResults:50});
     d?.items?.forEach(v=>{
       const s=parseDur(v.contentDetails?.duration||'PT0S');
-      m[v.id]={dur:s,durStr:fmtDur(s),isShort:s>0&&s<=61,title:v.snippet?.title||''};
+      const vc=v.statistics?.viewCount ? parseInt(v.statistics.viewCount) : 0;
+      m[v.id]={
+        dur:s, durStr:fmtDur(s), isShort:s>0&&s<=61,
+        title:v.snippet?.title||'',
+        viewCount:vc, viewStr:vc>0?fmtNum(vc)+' views':''
+      };
     });
   }
   return m;
@@ -602,7 +649,7 @@ async function loadFeed() {
     const dets = await fetchVidDetails(all.map(v=>v.videoId));
     all.forEach(v=>{
       const d=dets[v.videoId];
-      if (d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;if(d.title)v.title=d.title;}
+      if (d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;if(d.title)v.title=d.title;v.viewStr=d.viewStr||'';}
       st.vmap[v.videoId]=v;
     });
 
@@ -657,12 +704,6 @@ function loadMore() {
   if(rem<=0){btn?.remove();}else if(btn){btn.textContent=`Load more (${rem} remaining)`;}
 }
 
-function bestThumb(t) {
-  // Return highest quality available thumbnail
-  if (!t) return '';
-  return t.maxres?.url || t.standard?.url || t.high?.url || t.medium?.url || t.default?.url || '';
-}
-
 function vCard(v) {
   const ago=tAgo(v.publishedAt);
   return `<div class="vc" onclick="play('${esc(v.videoId)}')">
@@ -678,7 +719,7 @@ function vCard(v) {
         <div class="ch-thumb"><img src="${esc(v.chThumb)}" alt="" onerror="this.style.display='none'"></div>
         <div class="vmt">
           <div class="ch-name">${esc(v.channelTitle)}</div>
-          <div class="vdate">${ago}</div>
+          <div class="vdate">${ago}${v.viewStr?' · '+esc(v.viewStr):''}</div>
         </div>
       </div>
     </div>
@@ -737,14 +778,18 @@ async function loadPlTab() {
     st.playlists=d.items;
     document.getElementById('plWrap').innerHTML=`
       <div class="pl-grid">
-        ${d.items.map(p=>`
+        ${d.items.map(p=>{
+          const pt=p.snippet.thumbnails;
+          const pthumb=pt?.maxres?.url||pt?.standard?.url||pt?.high?.url||pt?.medium?.url||pt?.default?.url||'';
+          return `
           <div class="plc" onclick="openPl('${esc(p.id)}','${esc(p.snippet.title)}')">
             <div class="pl-thumb">
-              <img src="${esc(p.snippet.thumbnails?.medium?.url||p.snippet.thumbnails?.default?.url||'')}" alt="" onerror="this.style.display='none'">
+              <img src="${esc(pthumb)}" alt="" onerror="this.style.display='none'">
               <div class="pl-count">▶ ${p.contentDetails?.itemCount||'?'} videos</div>
             </div>
             <div class="pl-info"><div class="pl-title">${esc(p.snippet.title)}</div></div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>`;
     st.plDone=true;
   } catch(e) {
@@ -759,7 +804,7 @@ async function openPl(id, title) {
     const dets = await fetchVidDetails(vs.map(v=>v.videoId));
     vs.forEach(v=>{
       const d=dets[v.videoId];
-      if(d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;}
+      if(d){v.dur=d.dur;v.durStr=d.durStr;v.isShort=d.isShort;v.viewStr=d.viewStr||'';}
       const sub=st.subs.find(s=>s.id===v.channelId);
       if(sub) v.chThumb=sub.thumb;
       st.vmap[v.videoId]=v;
@@ -779,20 +824,29 @@ async function openPl(id, title) {
 function play(vid) {
   const v=st.vmap[vid];
   if (!v) return;
+  st.currentVid = vid;
   document.getElementById('pCh').textContent=v.channelTitle;
   document.getElementById('pTitle').textContent=v.title;
   document.getElementById('pChName').textContent=v.channelTitle;
   document.getElementById('pDate').textContent=tAgo(v.publishedAt);
   document.getElementById('pChAv').src=v.chThumb||'';
   document.getElementById('pvstats').style.display='none';
-  document.getElementById('pCommentsWrap').innerHTML=
-    `<button class="pload-comments" onclick="loadComments('${esc(vid)}')">Load comments</button>`;
+  document.getElementById('pViews').textContent='';
+  document.getElementById('pCommentCount').textContent='';
+  // Show cached views immediately if available
+  if (v.viewStr) {
+    document.getElementById('pViews').textContent=v.viewStr;
+    document.getElementById('pvstats').style.display='flex';
+  }
+  // Use addEventListener instead of onclick to avoid quote-escaping bugs
+  const cw=document.getElementById('pCommentsWrap');
+  cw.innerHTML=`<button class="pload-comments" id="loadCommentsBtn">Load comments</button>`;
+  document.getElementById('loadCommentsBtn').addEventListener('click', loadComments);
   document.getElementById('ytf').src=
     `https://www.youtube.com/embed/${vid}?autoplay=1&rel=0&modestbranding=1&playsinline=1`;
   document.getElementById('player').classList.add('on');
   document.body.style.overflow='hidden';
   history.pushState({player:true},'');
-  // Load stats silently in background
   loadVideoStats(vid);
 }
 
@@ -801,15 +855,19 @@ async function loadVideoStats(vid) {
     const d = await api('/videos',{part:'statistics',id:vid});
     const s = d?.items?.[0]?.statistics;
     if (!s) return;
-    const views = s.viewCount ? fmtNum(parseInt(s.viewCount)) : null;
-    const cc    = s.commentCount ? fmtNum(parseInt(s.commentCount)) : null;
-    if (views) document.getElementById('pViews').textContent = views+' views';
+    const views = s.viewCount ? fmtNum(parseInt(s.viewCount))+' views' : '';
+    const cc    = s.commentCount ? fmtNum(parseInt(s.commentCount)) : '';
+    if (vid !== st.currentVid) return; // user navigated away
+    if (views) document.getElementById('pViews').textContent = views;
     if (cc)    document.getElementById('pCommentCount').textContent = cc;
     if (views||cc) document.getElementById('pvstats').style.display='flex';
+    if (st.vmap[vid]) st.vmap[vid].viewStr = views;
   } catch(e){}
 }
 
-async function loadComments(vid) {
+async function loadComments() {
+  const vid = st.currentVid;
+  if (!vid) return;
   document.getElementById('pCommentsWrap').innerHTML=
     `<div class="loading" style="padding:24px 0"><div class="spin"></div></div>`;
   try {
